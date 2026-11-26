@@ -1,25 +1,19 @@
 package dev.nxnative.android;
 
 /**
- * The game's audio focus (GameActivity's AudioFocusRequest), without Android types so the JVM test can run it (AudioFocusJvmTest).
- * A transient loss (a call, a navigation prompt, a notification sound) is followed by a gain from Android once the other app is done. A permanent loss (another app
- * started playing music or a video, which a frontend or the home screen may do while the game is minimized) never is: Android drops the request, so the game kept its
- * sound suspended (Native.audioInterrupt) after returning, with everything else running. A focus that is lost for good, or was refused, is asked for again on the return
+ * The game's sound beside other apps' (GameActivity), without Android types so the JVM test can run it (AudioFocusJvmTest).
+ * The game asks for no audio focus, so it plays alongside a video in picture-in-picture, music or a frontend's sounds: an AUDIOFOCUS_GAIN request paused them when
+ * the game started, and their playing again took the focus back and silenced the game (Native.audioInterrupt). Without the focus no loss reaches the game for a phone
+ * call either, so the audio mode stands in for it (AudioManager.OnModeChangedListener): a call interrupts the sound from the ringing to the hang-up. A voice chat
+ * (MODE_IN_COMMUNICATION) does not: the game plays beside it, as it does beside media
  */
 final class AudioFocus {
-    // AudioManager's values
-    static final int GAIN = 1, LOSS = -1, LOSS_TRANSIENT = -2, LOSS_TRANSIENT_CAN_DUCK = -3;
+    // AudioManager's MODE_* values
+    static final int MODE_NORMAL = 0, MODE_RINGTONE = 1, MODE_IN_CALL = 2, MODE_IN_COMMUNICATION = 3, MODE_CALL_SCREENING = 4, MODE_CALL_REDIRECT = 5,
+            MODE_COMMUNICATION_REDIRECT = 6;
 
-    private boolean dropped;   // lost for good or refused: no gain will come without a new request
+    private AudioFocus() {}
 
-    /** The listener's change: whether the game's sound is interrupted now */
-    boolean changed(int f) {
-        if (f == GAIN) { dropped = false; return false; }
-        if (f == LOSS) dropped = true;
-        return f == LOSS || f == LOSS_TRANSIENT || f == LOSS_TRANSIENT_CAN_DUCK;
-    }
-    /** The answer to a request: granted ends the interruption (no listener call comes for it), refused leaves it to the next return */
-    void requested(boolean granted) { dropped = !granted; }
-    /** On returning to the foreground: whether to request the focus again */
-    boolean askAgain() { return dropped; }
+    /** Whether the game's sound is interrupted in this audio mode: a phone call ringing, in progress, being screened or redirected to another device */
+    static boolean interrupts(int mode) { return mode == MODE_RINGTONE || mode == MODE_IN_CALL || mode == MODE_CALL_SCREENING || mode == MODE_CALL_REDIRECT; }
 }

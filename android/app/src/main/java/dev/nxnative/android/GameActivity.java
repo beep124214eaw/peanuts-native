@@ -8,10 +8,8 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.hardware.input.InputManager;
-import android.media.AudioAttributes;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
-import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -82,9 +80,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private boolean input, started;
     private InputManager inputManager;
     private AudioManager audio;
-    private AudioFocusRequest focus;
-    private final AudioFocus focusState = new AudioFocus();
-    private boolean requestFocus() { boolean g = audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED; focusState.requested(g); return g; }
+    private AudioManager.OnModeChangedListener audioMode;   // a phone call interrupts the sound (AudioFocus: the game holds no audio focus)
     private volatile AudioDeviceCallback route;
     private boolean routeReady;
 
@@ -1311,7 +1307,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (padMotion != null) { padMotion.release(); padMotion = null; }
         if (inputManager != null) inputManager.unregisterInputDeviceListener(this);
         if (audio != null) {
-            if (focus != null) audio.abandonAudioFocusRequest(focus);
+            if (audioMode != null) { audio.removeOnModeChangedListener(audioMode); audioMode = null; }
             if (route != null) { audio.unregisterAudioDeviceCallback(route); route = null; }
         }
         super.onDestroy();
@@ -1471,13 +1467,11 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (resumedNow) rotationWatch.resume(); else rotationWatch.now();   // PEANUTS: resumed before the start, onResume did not follow the turns (#811)
         if (resumedNow && !paused) { Native.motionStart(); padMotion.resume(); }   // the screen was resumed before the game started (onResume then did nothing): the sensors start here
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_UNKNOWN).build())
-                .setOnAudioFocusChangeListener(f -> Native.audioInterrupt(focusState.changed(f)), ui)
-                .build();
-        // Granted at once calls no listener: an interruption the screen that went saw (a call while in the background) is over for this one
-        if (requestFocus()) Native.audioInterrupt(false);
-        else Native.note("audio focus not granted at start");
+        // No audio focus (AudioFocus): the game plays beside other apps' sound (a video in picture-in-picture, music), and only a phone call interrupts it, through
+        // the audio mode. The mode now also ends an interruption the screen that went saw (a call while in the background) once the call is over
+        audioMode = m -> Native.audioInterrupt(AudioFocus.interrupts(m));
+        audio.addOnModeChangedListener(getMainExecutor(), audioMode);
+        Native.audioInterrupt(AudioFocus.interrupts(audio.getMode()));
         // The callback first reports the devices already there: only later changes reopen the streams
         route = new AudioDeviceCallback() {
             @Override public void onAudioDevicesAdded(AudioDeviceInfo[] d) { if (routeReady) Native.audioRouteChanged(); }
@@ -1717,11 +1711,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         hostInBackground = false;
         pinStart();   // PEANUTS: the thread placement loop ended at the stop (pinTick)
         dev.peanuts.Companion.back(this);   // PEANUTS: the companion returns to the second display with the game (it left at onStop)
-        // Another app took the audio focus for good while the game was away (AudioFocus): no gain would come, and the game stayed silent. Asked for again here
-        if (audio != null && focus != null && focusState.askAgain()) {
-            if (requestFocus()) { Native.note("audio focus asked for again on the return: granted"); Native.audioInterrupt(false); }
-            else Native.note("audio focus asked for again on the return: refused");
-        }
+        // The sound on the return follows the audio mode as it is now (AudioFocus): only a call still going on keeps it interrupted
+        if (audio != null && audioMode != null) Native.audioInterrupt(AudioFocus.interrupts(audio.getMode()));
         Native.lifecycle(2);
     }
     @Override protected void onResume() {
