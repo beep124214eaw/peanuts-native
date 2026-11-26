@@ -1,6 +1,6 @@
-"""The game's audio focus on Android (AudioFocus.java with android/app/src/jvmtest's AudioFocusJvmTest): a permanent loss (another app playing while the game is minimized)
-gets no gain from Android, so the return to the game asks for the focus again; otherwise the sound stayed suspended (Native.audioInterrupt) with the game running.
-The JVM part is skipped without a JDK."""
+"""The game's sound beside other apps' on Android (AudioFocus.java with android/app/src/jvmtest's AudioFocusJvmTest): the game asks for no audio focus, so it plays
+alongside a video in picture-in-picture or music instead of pausing it, and their playing never silences it; a phone call still interrupts the sound
+(Native.audioInterrupt), through the audio mode. The JVM part is skipped without a JDK."""
 import shutil
 import subprocess
 import tempfile
@@ -16,16 +16,19 @@ ACTIVITY = REPO / 'android/app/src/main/java/dev/nxnative/android/GameActivity.j
 class Wiring(unittest.TestCase):
     def test_activity_uses_it(self):
         t = ACTIVITY.read_text(encoding='utf-8')
-        self.assertIn('Native.audioInterrupt(focusState.changed(f))', t)   # the listener goes through AudioFocus
-        self.assertIn('focusState.requested(g)', t)                          # every request's answer is recorded
+        self.assertNotIn('requestAudioFocus', t)                                          # no focus: other apps' sound plays on beside the game
+        self.assertIn('Native.audioInterrupt(AudioFocus.interrupts(m))', t)              # the mode listener goes through AudioFocus
+        self.assertIn('addOnModeChangedListener(', t)
+        self.assertIn('removeOnModeChangedListener(audioMode)', t)                       # and goes with the screen
         start = t[t.index('protected void onStart()'):t.index('protected void onResume()')]
-        self.assertIn('focusState.askAgain()', start)                        # the return asks again
-        self.assertLess(start.index('focusState.askAgain()'), start.index('Native.lifecycle(2)'))   # before the host resumes the sound
+        self.assertIn('AudioFocus.interrupts(audio.getMode())', start)                   # the return follows the mode as it is now
+        self.assertLess(start.index('AudioFocus.interrupts(audio.getMode())'), start.index('Native.lifecycle(2)'))   # before the host resumes the sound
 
     def test_constants_match_android(self):
-        # AudioManager.AUDIOFOCUS_GAIN / _LOSS / _LOSS_TRANSIENT / _LOSS_TRANSIENT_CAN_DUCK
+        # AudioManager.MODE_NORMAL / _RINGTONE / _IN_CALL / _IN_COMMUNICATION / _CALL_SCREENING / _CALL_REDIRECT / _COMMUNICATION_REDIRECT
         t = SRC.read_text(encoding='utf-8')
-        self.assertIn('GAIN = 1, LOSS = -1, LOSS_TRANSIENT = -2, LOSS_TRANSIENT_CAN_DUCK = -3', t)
+        self.assertIn('MODE_NORMAL = 0, MODE_RINGTONE = 1, MODE_IN_CALL = 2, MODE_IN_COMMUNICATION = 3, MODE_CALL_SCREENING = 4, MODE_CALL_REDIRECT = 5', t)
+        self.assertIn('MODE_COMMUNICATION_REDIRECT = 6', t)
 
 
 @unittest.skipUnless(shutil.which('javac') and shutil.which('java'), 'no JDK')
